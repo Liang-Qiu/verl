@@ -1,5 +1,6 @@
 #!/bin/bash
-
+shopt -s expand_aliases
+alias pip='uv pip'
 USE_MEGATRON=${USE_MEGATRON:-1}
 USE_SGLANG=${USE_SGLANG:-1}
 
