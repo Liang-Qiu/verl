@@ -552,9 +552,9 @@ class AgentLoopWorkerBase:
         else:
             position_ids = compute_position_id_with_mask(attention_mask)  # (1, seq_len)
         enable_async_reward = (
-            self.reward_router_address is not None and self.config.reward_model.enable_resource_pool
+            self.reward_router_address is not None
         ) or not self.config.reward_model.enable
-        if output.reward_score is None and enable_async_reward and self.use_reward_loop:
+        if output.reward_score is None and enable_async_reward:
             batch = TensorDict(
                 {
                     "prompts": prompt_output["input_ids"],  # [1, prompt_length]
@@ -721,7 +721,7 @@ class AgentLoopManager:
     """Agent loop manager that manages a group of agent loop workers."""
 
     def __init__(
-        self, config: DictConfig, worker_group: RayWorkerGroup = None, rm_resource_pool: RayResourcePool = None
+        self, config: DictConfig, worker_group: RayWorkerGroup = None, rm_resource_pool: RayResourcePool = None, actor_resource_pool: RayResourcePool = None
     ):
         """Initialize agent loop manager.
 
@@ -729,18 +729,32 @@ class AgentLoopManager:
             config (DictConfig): trainer config.
             worker_group (RayWorkerGroup): ActorRolloutRef worker group for hybrid mode; None for standalone mode.
             rm_resource_pool (RayResourcePool): Resource pool for reward model (Standalone mode).
+            actor_resource_pool (RayResourcePool): Resource pool for actor rollout (Colocate mode, shared with reward model).
         """
         self.config = config
         self.worker_group = worker_group
         self.reward_model_manager = None
         self.reward_router_address = None
-        if self.config.reward_model.enable and self.config.reward_model.enable_resource_pool:
+        if self.config.reward_model.enable:
             from verl.experimental.reward import RewardModelManager
 
-            # TODO (dyy): current rm is colocated with the legacy fsdp/megatron rm
-            # future pr will depericate fsdp/megatron rm and init RewardModelManager in standalone mode
-            self.reward_model_manager = RewardModelManager(config.reward_model, rm_resource_pool)
-            self.reward_router_address = self.reward_model_manager.get_router_address()
+            # Create RewardModelManager in both standalone and colocate modes
+            # Standalone mode: use separate rm_resource_pool
+            # Colocate mode: use actor_resource_pool (shared with actor)
+            if self.config.reward_model.enable_resource_pool:
+                # Standalone mode: use provided rm_resource_pool (can be None, RewardModelManager handles it)
+                resource_pool = rm_resource_pool
+            else:
+                # Colocate mode: use actor_resource_pool (shared GPU with actor rollout)
+                # Fallback to worker_group.resource_pool if actor_resource_pool is not provided (for backward compatibility)
+                resource_pool = actor_resource_pool
+
+            # Create RewardModelManager if we have a valid resource pool or are in standalone mode
+            # In standalone: resource_pool can be None (RewardModelManager creates its own)
+            # In colocate: resource_pool must be actor_resource_pool (shared GPU)
+            if resource_pool is not None:
+                self.reward_model_manager = RewardModelManager(config.reward_model, resource_pool)
+                self.reward_router_address = self.reward_model_manager.get_router_address()
 
         # for recipe to change
         if not hasattr(self, "rollout_replica_class"):

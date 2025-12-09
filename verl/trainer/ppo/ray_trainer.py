@@ -783,10 +783,17 @@ class RayPPOTrainer:
             else:
                 rm_resource_pool = None
 
+            # For colocate mode: get actor rollout resource pool to share with reward model
+            actor_resource_pool = None
+            if self.config.reward_model.enable and not self.config.reward_model.enable_resource_pool:
+                # Colocate mode: use actor rollout's resource pool
+                actor_resource_pool = self.resource_pool_manager.get_resource_pool(actor_role)
+
             self.async_rollout_manager = AgentLoopManager(
                 config=self.config,
                 worker_group=self.actor_rollout_wg,
                 rm_resource_pool=rm_resource_pool,
+                actor_resource_pool=actor_resource_pool,
             )
 
     def _save_checkpoint(self):
